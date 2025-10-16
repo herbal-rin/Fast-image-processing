@@ -1,0 +1,35 @@
+# 依赖文件
+node_modules/
+.pnpm-store/
+
+# 构建输出
+dist/
+build/
+
+# 环境变量
+.env
+.env.local
+.env.production
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# 运行时文件
+.DS_Store
+Thumbs.db
+
+# IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 临时文件
+*.tmp
+*.temp
+
+# 本地Node.js（如果不需要的话）
+node-v18.18.0-darwin-x64/
+node.tar.gz
