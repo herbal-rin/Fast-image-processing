@@ -2,7 +2,6 @@
  * 主应用组件
  */
 
-import React from 'react';
 import { Editor } from './pages/Editor';
 
 function App() {

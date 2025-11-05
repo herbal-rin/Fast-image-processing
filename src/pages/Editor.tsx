@@ -7,7 +7,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { CropOverlay } from '../components/CropOverlay';
 import { CanvasManager } from '../canvas/useCanvas';
-import { generateFilename, downloadFile, debounce } from '../utils/image';
+import { generateFilename, debounce } from '../utils/image';
 
 export const Editor: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -19,6 +19,8 @@ export const Editor: React.FC = () => {
   const [cropRect, setCropRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [historyInfo, setHistoryInfo] = useState({ canUndo: false, canRedo: false });
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [histogramData, setHistogramData] = useState<{ r: number[]; g: number[]; b: number[]; gray: number[] } | null>(null);
+  const [compareMode, setCompareMode] = useState<'processed' | 'original' | 'split'>('processed');
 
   // 初始化Canvas管理器
   useEffect(() => {
@@ -26,6 +28,13 @@ export const Editor: React.FC = () => {
       canvasManagerRef.current = new CanvasManager(canvasRef.current);
     }
   }, []);
+
+  // 监听对比模式变化
+  useEffect(() => {
+    if (canvasManagerRef.current && hasImage) {
+      canvasManagerRef.current.updatePreview(compareMode);
+    }
+  }, [compareMode, hasImage]);
 
   // 更新历史记录信息
   const updateHistoryInfo = useCallback(() => {
@@ -38,15 +47,33 @@ export const Editor: React.FC = () => {
     }
   }, []);
 
+  // 更新直方图数据
+  const updateHistogramData = useCallback(() => {
+    try {
+      if (canvasManagerRef.current) {
+        const data = canvasManagerRef.current.getHistogramData();
+        setHistogramData(data);
+      }
+    } catch (error) {
+      console.error('更新直方图数据失败:', error);
+      // 不抛出错误，避免影响图像导入
+    }
+  }, []);
+
   // 防抖的滤镜应用函数
   const debouncedApplyFilter = useCallback(
-    debounce((type: string, value?: number) => {
+    debounce((type: string, value?: number, extraParams?: { r?: number; g?: number; b?: number; strength?: number; mode?: 'luminance' | 'rgb'; sigma?: number; radius?: number }, currentCompareMode?: 'processed' | 'original' | 'split') => {
       if (canvasManagerRef.current) {
-        canvasManagerRef.current.applyFilter({ type, value });
+        canvasManagerRef.current.applyFilter({ type, value, ...extraParams });
+        // 应用滤镜后，根据当前对比模式更新预览
+        if (currentCompareMode) {
+          canvasManagerRef.current.updatePreview(currentCompareMode);
+        }
         updateHistoryInfo();
+        updateHistogramData();
       }
-    }, 100),
-    [updateHistoryInfo]
+    }, 200),
+    [updateHistoryInfo, updateHistogramData]
   );
 
   // 处理文件导入
@@ -64,11 +91,16 @@ export const Editor: React.FC = () => {
       setHasImage(true);
       setImageSize(canvasManagerRef.current.getImageSize());
       updateHistoryInfo();
+      
+      // 更新直方图数据（延迟执行，确保图像已完全加载）
+      setTimeout(() => {
+        updateHistogramData();
+      }, 100);
     } catch (error) {
       console.error('导入图片失败:', error);
       alert('导入图片失败，请检查文件格式');
     }
-  }, [updateHistoryInfo]);
+  }, [updateHistoryInfo, updateHistogramData]);
 
   // 处理拖拽
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -89,12 +121,17 @@ export const Editor: React.FC = () => {
         setHasImage(true);
         setImageSize(canvasManagerRef.current.getImageSize());
         updateHistoryInfo();
+        
+        // 更新直方图数据（延迟执行，确保图像已完全加载）
+        setTimeout(() => {
+          updateHistogramData();
+        }, 100);
       } catch (error) {
         console.error('导入图片失败:', error);
         alert('导入图片失败，请检查文件格式');
       }
     }
-  }, [updateHistoryInfo]);
+  }, [updateHistoryInfo, updateHistogramData]);
 
   // 导出图片
   const handleExport = useCallback(() => {
@@ -139,9 +176,9 @@ export const Editor: React.FC = () => {
   }, [updateHistoryInfo]);
 
   // 滤镜变化
-  const handleFilterChange = useCallback((type: string, value?: number) => {
-    debouncedApplyFilter(type, value);
-  }, [debouncedApplyFilter]);
+  const handleFilterChange = useCallback((type: string, value?: number, extraParams?: { r?: number; g?: number; b?: number; strength?: number; mode?: 'luminance' | 'rgb'; sigma?: number; radius?: number }) => {
+    debouncedApplyFilter(type, value, extraParams, compareMode);
+  }, [debouncedApplyFilter, compareMode]);
 
   // 旋转操作
   const handleRotate = useCallback((angle: number) => {
@@ -268,13 +305,11 @@ export const Editor: React.FC = () => {
         onFlip={handleFlip}
         onCropStart={handleCropStart}
         onViewModeChange={handleViewModeChange}
-        onResetSliders={() => {
-          // 这里可以添加额外的重置逻辑
-        }}
+        histogramData={histogramData}
       />
 
       {/* 主画布区域 */}
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div className="relative">
           <canvas
             ref={canvasRef}
@@ -296,6 +331,42 @@ export const Editor: React.FC = () => {
             canvasSize={{ width: 800, height: 600 }}
           />
         </div>
+
+        {/* 对比模式按钮 */}
+        {hasImage && (
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => setCompareMode('processed')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                compareMode === 'processed'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              处理后
+            </button>
+            <button
+              onClick={() => setCompareMode('original')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                compareMode === 'original'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              原图
+            </button>
+            <button
+              onClick={() => setCompareMode('split')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                compareMode === 'split'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              对比
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 隐藏的文件输入 */}

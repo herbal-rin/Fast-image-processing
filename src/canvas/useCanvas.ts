@@ -3,7 +3,7 @@
  * 提供图像加载、处理、预览和导出功能
  */
 
-import { applyFilter, rotateImage, flipImage, FilterParams } from './filters';
+import { applyFilter, rotateImage, flipImage, FilterParams, calculateHistogram } from './filters';
 import { HistoryManager } from './history';
 
 export interface ViewMode {
@@ -36,17 +36,33 @@ export class CanvasManager {
     contrast: number;
     saturation: number;
     blur: number;
+    rgbR: number;
+    rgbG: number;
+    rgbB: number;
+    histogramEqualizationStrength: number;
+    histogramEqualizationMode: 'luminance' | 'rgb';
+    medianFilterRadius: number;
+    gaussianBlurSigma: number;
+    sharpenStrength: number;
+    laplacianSharpen: boolean;
     grayscale: boolean;
     invert: boolean;
-    sharpen: boolean;
   } = {
     brightness: 0,
     contrast: 0,
     saturation: 0,
-    blur: 1,
+    blur: 0,
+    rgbR: 0,
+    rgbG: 0,
+    rgbB: 0,
+    histogramEqualizationStrength: 0,
+    histogramEqualizationMode: 'luminance',
+    medianFilterRadius: 0,
+    gaussianBlurSigma: 0,
+    sharpenStrength: 0,
+    laplacianSharpen: false,
     grayscale: false,
-    invert: false,
-    sharpen: false
+    invert: false
   };
 
   constructor(canvas: HTMLCanvasElement) {
@@ -137,7 +153,7 @@ export class CanvasManager {
    * 更新调整参数
    */
   private updateAdjustments(params: FilterParams): void {
-    const { type, value = 0, radius = 1 } = params;
+    const { type, value = 0, radius = 1, r = 0, g = 0, b = 0, strength = 0, mode = 'luminance', sigma = 0 } = params;
     
     switch (type) {
       case 'brightness':
@@ -152,14 +168,32 @@ export class CanvasManager {
       case 'blur':
         this.currentAdjustments.blur = radius;
         break;
+      case 'adjustRGB':
+        this.currentAdjustments.rgbR = r;
+        this.currentAdjustments.rgbG = g;
+        this.currentAdjustments.rgbB = b;
+        break;
+      case 'histogramEqualization':
+        this.currentAdjustments.histogramEqualizationStrength = strength;
+        this.currentAdjustments.histogramEqualizationMode = mode;
+        break;
+      case 'medianFilter':
+        this.currentAdjustments.medianFilterRadius = value;
+        break;
+      case 'gaussianBlur':
+        this.currentAdjustments.gaussianBlurSigma = sigma;
+        break;
+      case 'sharpen':
+        this.currentAdjustments.sharpenStrength = value;
+        break;
+      case 'laplacianSharpen':
+        this.currentAdjustments.laplacianSharpen = !this.currentAdjustments.laplacianSharpen;
+        break;
       case 'grayscale':
         this.currentAdjustments.grayscale = !this.currentAdjustments.grayscale;
         break;
       case 'invert':
         this.currentAdjustments.invert = !this.currentAdjustments.invert;
-        break;
-      case 'sharpen':
-        this.currentAdjustments.sharpen = !this.currentAdjustments.sharpen;
         break;
     }
   }
@@ -168,7 +202,9 @@ export class CanvasManager {
    * 基于原始图像应用所有调整
    */
   private applyAllAdjustments(): ImageData {
-    if (!this.originalImageData) return this.originalImageData;
+    if (!this.originalImageData) {
+      throw new Error('No original image data');
+    }
     
     let result = this.cloneImageData(this.originalImageData);
     
@@ -185,6 +221,16 @@ export class CanvasManager {
       result = applyFilter(result, { type: 'saturation', value: this.currentAdjustments.saturation });
     }
     
+    // 应用RGB调节
+    if (this.currentAdjustments.rgbR !== 0 || this.currentAdjustments.rgbG !== 0 || this.currentAdjustments.rgbB !== 0) {
+      result = applyFilter(result, { 
+        type: 'adjustRGB', 
+        r: this.currentAdjustments.rgbR,
+        g: this.currentAdjustments.rgbG,
+        b: this.currentAdjustments.rgbB
+      });
+    }
+    
     // 应用滤镜效果
     if (this.currentAdjustments.grayscale) {
       result = applyFilter(result, { type: 'grayscale' });
@@ -194,12 +240,40 @@ export class CanvasManager {
       result = applyFilter(result, { type: 'invert' });
     }
     
-    if (this.currentAdjustments.blur > 1) {
+    if (this.currentAdjustments.blur > 0) {
       result = applyFilter(result, { type: 'blur', radius: this.currentAdjustments.blur });
     }
     
-    if (this.currentAdjustments.sharpen) {
-      result = applyFilter(result, { type: 'sharpen' });
+    if (this.currentAdjustments.sharpenStrength > 0) {
+      result = applyFilter(result, { type: 'sharpen', value: this.currentAdjustments.sharpenStrength });
+    }
+    
+    // 应用直方图均衡（只有强度大于0时才应用）
+    if (this.currentAdjustments.histogramEqualizationStrength > 0) {
+      result = applyFilter(result, { 
+        type: 'histogramEqualization',
+        strength: this.currentAdjustments.histogramEqualizationStrength,
+        mode: this.currentAdjustments.histogramEqualizationMode
+      });
+    }
+    
+    // 应用高级滤镜
+    if (this.currentAdjustments.medianFilterRadius > 0) {
+      result = applyFilter(result, { 
+        type: 'medianFilter', 
+        radius: this.currentAdjustments.medianFilterRadius 
+      });
+    }
+    
+    if (this.currentAdjustments.gaussianBlurSigma > 0) {
+      result = applyFilter(result, { 
+        type: 'gaussianBlur', 
+        sigma: this.currentAdjustments.gaussianBlurSigma 
+      });
+    }
+    
+    if (this.currentAdjustments.laplacianSharpen) {
+      result = applyFilter(result, { type: 'laplacianSharpen' });
     }
     
     return result;
@@ -224,10 +298,18 @@ export class CanvasManager {
         brightness: 0,
         contrast: 0,
         saturation: 0,
-        blur: 1,
+        blur: 0,
+        rgbR: 0,
+        rgbG: 0,
+        rgbB: 0,
+        histogramEqualizationStrength: 0,
+        histogramEqualizationMode: 'luminance',
+        medianFilterRadius: 0,
+        gaussianBlurSigma: 0,
+        sharpenStrength: 0,
+        laplacianSharpen: false,
         grayscale: false,
-        invert: false,
-        sharpen: false
+        invert: false
       };
       
       this.currentImageData = this.cloneImageData(this.originalImageData);
@@ -341,29 +423,102 @@ export class CanvasManager {
 
   /**
    * 更新预览
+   * @param mode 显示模式：'processed'(处理后), 'original'(原图), 'split'(对比)
    */
-  private updatePreview(): void {
+  updatePreview(mode: 'processed' | 'original' | 'split' = 'processed'): void {
     if (!this.currentImageData) {
       this.clearCanvas();
       return;
     }
 
-    // 将当前图像数据绘制到离屏canvas
-    this.offscreenCtx.putImageData(this.currentImageData, 0, 0);
-    
-    // 计算预览尺寸
     const { width: canvasWidth, height: canvasHeight } = this.canvas;
     const { width: imageWidth, height: imageHeight } = this.currentImageData;
     
-    let { scale, x, y, width, height } = this.calculatePreviewSize(
+    let { x, y, width, height } = this.calculatePreviewSize(
       canvasWidth, canvasHeight, imageWidth, imageHeight
     );
     
     // 清空canvas
     this.ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     
-    // 绘制图像
-    this.ctx.drawImage(this.offscreenCanvas, x, y, width, height);
+    if (mode === 'original') {
+      // 显示原图
+      if (this.originalImageData) {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = this.originalImageData.width;
+        tempCanvas.height = this.originalImageData.height;
+        const tempCtx = tempCanvas.getContext('2d')!;
+        tempCtx.putImageData(this.originalImageData, 0, 0);
+        this.ctx.drawImage(tempCanvas, x, y, width, height);
+      }
+    } else if (mode === 'split') {
+      // 对比模式：上下并排显示两张完整图片，保持宽高比
+      // 直接使用画布的完整尺寸，而不是基于calculatePreviewSize的结果
+      const gap = 8; // 进一步减小间隙
+      const padding = 10; // 边缘留白
+      
+      // 可用区域（去除边缘留白）
+      const availableWidth = canvasWidth - padding * 2;
+      const availableHeight = canvasHeight - padding * 2 - gap;
+      const availableHeightPerImage = availableHeight / 2;
+      
+      // 计算每张图片的实际显示尺寸（保持宽高比）
+      const imageAspectRatio = imageWidth / imageHeight;
+      
+      // 尽可能填满可用空间
+      let singleWidth = availableWidth;
+      let singleHeight = availableHeightPerImage;
+      
+      // 根据宽高比调整尺寸，尽可能填满空间
+      if (singleWidth / singleHeight > imageAspectRatio) {
+        // 宽度过大，以高度为准
+        singleWidth = singleHeight * imageAspectRatio;
+      } else {
+        // 高度过大，以宽度为准
+        singleHeight = singleWidth / imageAspectRatio;
+      }
+      
+      // 计算居中位置
+      const centerX = (canvasWidth - singleWidth) / 2;
+      const topY = padding + (availableHeightPerImage - singleHeight) / 2;
+      const bottomY = padding + availableHeightPerImage + gap + (availableHeightPerImage - singleHeight) / 2;
+      
+      // 绘制原图（上方）
+      if (this.originalImageData) {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = this.originalImageData.width;
+        tempCanvas.height = this.originalImageData.height;
+        const tempCtx = tempCanvas.getContext('2d')!;
+        tempCtx.putImageData(this.originalImageData, 0, 0);
+        this.ctx.drawImage(tempCanvas, centerX, topY, singleWidth, singleHeight);
+        
+        // 添加原图标签
+        this.ctx.save();
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect(centerX, topY, 60, 30);
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = 'bold 14px sans-serif';
+        this.ctx.fillText('原图', centerX + 15, topY + 20);
+        this.ctx.restore();
+      }
+      
+      // 绘制处理后图像（下方）
+      this.offscreenCtx.putImageData(this.currentImageData, 0, 0);
+      this.ctx.drawImage(this.offscreenCanvas, centerX, bottomY, singleWidth, singleHeight);
+      
+      // 添加处理后标签
+      this.ctx.save();
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      this.ctx.fillRect(centerX, bottomY, 80, 30);
+      this.ctx.fillStyle = 'white';
+      this.ctx.font = 'bold 14px sans-serif';
+      this.ctx.fillText('处理后', centerX + 10, bottomY + 20);
+      this.ctx.restore();
+    } else {
+      // 默认显示处理后的图像
+      this.offscreenCtx.putImageData(this.currentImageData, 0, 0);
+      this.ctx.drawImage(this.offscreenCanvas, x, y, width, height);
+    }
     
     // 绘制裁剪框
     if (this.cropRect) {
@@ -553,6 +708,14 @@ export class CanvasManager {
       width: this.currentImageData.width,
       height: this.currentImageData.height
     };
+  }
+
+  /**
+   * 获取当前图像的直方图数据
+   */
+  getHistogramData(): { r: number[]; g: number[]; b: number[]; gray: number[] } | null {
+    if (!this.currentImageData) return null;
+    return calculateHistogram(this.currentImageData);
   }
 
   /**
